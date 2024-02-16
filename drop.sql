@@ -9,9 +9,7 @@ ALTER TABLE CustomerAccount DROP CONSTRAINT FK_CustomerAccount_Accounts;
 ALTER TABLE CustomerData DROP CONSTRAINT FK_CustomerData_AddressDetails;
 ALTER TABLE Employees  DROP CONSTRAINT FK_Employees_Departments;
 ALTER TABLE Accounts DROP CONSTRAINT FK_Accounts_AccountsTypes;
-ALTER TABLE TransfersHistory DROP CONSTRAINT FK_TransfersHistory_Accounts;
-ALTER TABLE TransfersHistory DROP CONSTRAINT FK_TransfersHistory_Accounts2;
-ALTER TABLE TransferDetails DROP CONSTRAINT FK_TransferDetails_TransfersHistory;
+ALTER TABLE TransfersHistory DROP CONSTRAINT FK_TransfersHistory_TransferDetails;
 ALTER TABLE RatesHistory DROP CONSTRAINT FK_RatesHistory_Currency;
 
 DROP TABLE dbo.Accounts
@@ -28,3 +26,7 @@ DROP TABLE dbo.RatesHistory
 DROP TABLE dbo.RequestsTypes
 DROP TABLE dbo.TransferDetails
 DROP TABLE dbo.TransfersHistory
+
+DROP PROCEDURE makeTransfer;
+DROP PROCEDURE checkCurrency;
+DROP PROCEDURE closeDeposit;
