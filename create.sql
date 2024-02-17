@@ -44,7 +44,7 @@ CREATE TABLE CustomerHistory(
 
 CREATE TABLE RequestsTypes(
 	requestID int PRIMARY KEY,
-	requestName nvarchar(50) NOT NULL,	--create type?
+	requestName nvarchar(50) NOT NULL,
 	requestDesc nvarchar(100)
 );
 
@@ -79,8 +79,8 @@ CREATE TABLE Deposits(
 CREATE TABLE TransfersHistory(
 	transferID int PRIMARY KEY IDENTITY(1,1),
 	title nvarchar(140) NOT NULL,
-	accountNr nvarchar(26),
-	payeeAccountNr nvarchar(26),
+	accountNr nvarchar(26) NOT NULL,
+	payeeAccountNr nvarchar(26) NOT NULL,
 	amount money NOT NULL
 );
 
@@ -93,11 +93,9 @@ CREATE TABLE TransferDetails(
 
 CREATE TABLE AccountsTypes(
 	typeID int PRIMARY KEY,
-	typeName nvarchar(30) NOT NULL, --normal, curr (for each currency), savings
+	typeName nvarchar(30) NOT NULL, -- normal, curr (for each currency), savings
 	bankRate decimal(4,2) DEFAULT 0.0,
 	currencyID nvarchar(3) NOT NULL
-	-- for loan
-	--loanInstallment money,
 );
 
 CREATE TABLE Currency(
@@ -207,7 +205,7 @@ BEGIN
 	END
 END;
 
---DROP PROCEDURE makeTransfer;
+-- DROP PROCEDURE makeTransfer;
 
 CREATE PROCEDURE makeTransfer
 	@title nvarchar(140),
@@ -280,7 +278,7 @@ BEGIN
 	-- a tutaj tez wstaienie do CustomerHistory, ale tym razem ze lokata zostala zamknieta
 END;
 
---DROP PROCEDURE openDeposit
+-- DROP PROCEDURE openDeposit
 CREATE PROCEDURE openDeposit
 	@accountID int,
 	@balance money,
@@ -299,7 +297,7 @@ BEGIN
 	COMMIT;
 END;
 
---DROP PROCEDURE closeDeposit
+-- DROP PROCEDURE closeDeposit
 CREATE PROCEDURE closeDeposit
 	@depositID int,
 	@currDate date
@@ -329,8 +327,101 @@ BEGIN
 END;
 
 
+-- DROP PROCEDURE calculateAvg
+
+CREATE PROCEDURE calculateAvg
+	@accountID int,
+	@currentDate date,
+	@avgBalance money OUTPUT
+AS
+BEGIN
+	DECLARE @accountNr varchar(26)
+	SELECT @accountNr = accountNr FROM Accounts WHERE accountID = @accountID
+
+	DECLARE transferCursor CURSOR FOR
+    SELECT TH.transferID FROM TransfersHistory TH JOIN TransferDetails TD ON TH.transferID = TD.transferID
+    WHERE (accountNr = @accountNr OR payeeAccountNr = @accountNr) ORDER BY transferDate DESC
+	FOR READ ONLY;
+	
+	DECLARE @transferID int, @balance money, @amount money, @duration int, @dateLimit date, @prevDate date;
+	SET @avgBalance = 0;
+	SELECT @balance = currentBalance FROM Accounts WHERE accountID = @accountID;
+	SELECT @dateLimit = DATEADD(month, -1, @currentDate);
+
+	OPEN transferCursor
+	FETCH transferCursor INTO @transferID
+
+	SET @prevDate = @currentDate
+
+	WHILE @@FETCH_STATUS = 0 AND @prevDate > @dateLimit
+	BEGIN
+		SET @currentDate = @prevDate;
+		SELECT @prevDate = transferDate FROM TransferDetails WHERE transferID = @transferID;
+		SELECT @amount = amount FROM TransfersHistory WHERE transferID = @transferID;
+
+		SET @duration = DATEDIFF(DAY, @prevDate, @currentDate);		-- sprawdzic co się stanie w przypadku dwoch przelewow w tym samym dniu
+		SET @avgBalance = @avgBalance + @duration*@balance;
+
+		IF @accountNr = (SELECT accountNr FROM TransfersHistory WHERE transferID = @transferID)
+		BEGIN	SET @balance = @balance + @amount;	END
+		ELSE
+		BEGIN	SET @balance = @balance - @amount;	END
+
+		FETCH transferCursor INTO @transferID
+	END
+	
+	SET @duration = DATEDIFF(DAY, @dateLimit, @prevDate);	
+	SET @avgBalance = @avgBalance + @duration*@balance;
+
+	CLOSE transferCursor
+	DEALLOCATE transferCursor
+END
+
+-- DROP PROCEDURE withdrawalInterest
+CREATE PROCEDURE withdrawalInterest
+	@currentDate date
+AS
+BEGIN
+	DECLARE accountCursor CURSOR 
+		FOR SELECT accountID FROM Accounts
+		FOR READ ONLY;
+
+	DECLARE @accountID int;
+	OPEN accountCursor
+	FETCH accountCursor INTO @accountID
+
+	WHILE @@FETCH_STATUS = 0
+	BEGIN
+		DECLARE @bankRate decimal (4,2), @interest money;
+		SELECT @bankRate = bankRate FROM Accounts A JOIN AccountsTypes AT ON A.typeID = AT.typeID WHERE accountID = @accountID;
+		IF @bankRate <> 0.0
+		BEGIN
+			EXEC calculateAvg @accountID, @currentDate, @interest OUTPUT
+			SET @interest = @interest / 365 * @bankRate;
+
+			DECLARE @accountNr varchar(26)
+			SELECT @accountNr = accountNr FROM Accounts WHERE accountID = @accountID
+			BEGIN TRANSACTION
+				DECLARE @status int;
+				EXEC @status = makeTransfer 'Interest', 'BANK-INTEREST', @accountNr,  @interest, 'BANK-INTEREST', @currentDate, NULL;
+				IF @status <> 0
+					RETURN -1;
+				SET @interest = @interest * 0.19;	-- 19% tax
+				EXEC @status = makeTransfer 'Interest-tax', @accountNr, 'BANK-INTEREST', @interest, 'BANK-INTEREST', @currentDate, NULL;
+				IF @status <> 0
+					RETURN -1;
+			COMMIT;
+		END
+		FETCH accountCursor INTO @accountID
+	END
+	CLOSE accountCursor
+	DEALLOCATE accountCursor
+END;
+
 
 --Tests
+EXEC withdrawalInterest '2022-03-01'
+
 DELETE FROM TransferDetails;
 DELETE FROM TransfersHistory;
 DELETE FROM CustomerAccount;
@@ -342,7 +433,7 @@ DELETE FROM Currency;
 INSERT INTO Currency VALUES ('PLN', 1, 1);
 INSERT INTO Currency VALUES ('EUR', 0.23, 4.35);
 
-INSERT INTO AccountsTypes VALUES (1, 'Normalne', 1.0, 'PLN');
+INSERT INTO AccountsTypes VALUES (1, 'Normalne', 0.05, 'PLN');
 INSERT INTO AccountsTypes VALUES (2, 'Euro', 0.0, 'EUR');
 
 INSERT INTO Accounts VALUES (1, 'numerKonta1', 1, 500);
@@ -382,6 +473,8 @@ SELECT * FROM Accounts;
 SELECT * FROM Accounts;
 EXEC makeTransfer 'przelew piąty, na nieznane konto', 'numerKonta3', 'numerKonta10', 400, 'blabla', '2022-02-12';
 SELECT * FROM Accounts;
+
+EXEC withdrawInterest '2022-03-01'
 
 SELECT * FROM TransfersHistory;
 SELECT * FROM TransferDetails;
